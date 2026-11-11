@@ -1,0 +1,47 @@
+<%@ page import="java.io.*,java.nio.file.*,java.util.*,jakarta.servlet.ServletContext,org.apache.poi.ss.usermodel.*" %>
+<%!
+private Path storage(ServletContext context) throws IOException {
+    String configured = context.getInitParameter("storageRoot");
+    Path root = (configured == null || configured.isBlank()) ? Paths.get(System.getProperty("user.home"), "ong-excel-archive") : Paths.get(configured);
+    root = root.toAbsolutePath().normalize();
+    Files.createDirectories(root.resolve("imports"));
+    Files.createDirectories(root.resolve("exports"));
+    return root;
+}
+private String esc(String value) {
+    return value == null ? "" : value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;");
+}
+private String cleanName(String name) {
+    if (name == null) return "fichier";
+    name = name.replace('\\', '/');
+    name = name.substring(name.lastIndexOf('/') + 1).replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").trim();
+    while (name.startsWith(".")) name = name.substring(1);
+    if (name.isBlank()) name = "fichier";
+    return name.length() > 120 ? name.substring(name.length() - 120) : name;
+}
+private String checkedId(String value) {
+    try { return UUID.fromString(value).toString(); } catch (Exception ex) { return null; }
+}
+private Path findFile(Path folder, String rawId) throws IOException {
+    String id = checkedId(rawId);
+    if (id == null) return null;
+    try (DirectoryStream<Path> files = Files.newDirectoryStream(folder, id + "__*")) {
+        for (Path file : files) if (Files.isRegularFile(file) && file.normalize().getParent().equals(folder.normalize())) return file;
+    }
+    return null;
+}
+private List<Path> archive(Path folder) throws IOException {
+    try (var files = Files.list(folder)) {
+        return files.filter(Files::isRegularFile).filter(p -> p.getFileName().toString().matches("[0-9a-fA-F-]{36}__.+"))
+            .sorted(Comparator.comparingLong((Path p) -> p.toFile().lastModified()).reversed()).toList();
+    }
+}
+private String fileId(Path file) { return file.getFileName().toString().split("__", 2)[0]; }
+private String displayName(Path file) { String[] parts = file.getFileName().toString().split("__", 2); return parts.length == 2 ? parts[1] : file.getFileName().toString(); }
+private String text(Row row, int col, DataFormatter formatter, FormulaEvaluator evaluator) {
+    if (row == null) return "";
+    Cell cell = row.getCell(col, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+    if (cell == null) return "";
+    try { return formatter.formatCellValue(cell, evaluator); } catch (RuntimeException ex) { return formatter.formatCellValue(cell); }
+}
+%>
